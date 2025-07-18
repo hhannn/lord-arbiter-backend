@@ -116,8 +116,12 @@ class BotRunner:
     def run(self):
         print(f"🚀 Running bot for {self.symbol} with {self.start_size} USDT")
         
+        self.stop_check_interval = 30
+        last_stop_check = 0
+        
         rebuy_prices = []
         rebuy_sizes = []
+        error_retries = 0
 
         try:
             self.session = self.get_session()
@@ -140,19 +144,28 @@ class BotRunner:
                 instrument = info['result']['list'][0]
                 self.min_order_qty = instrument['lotSizeFilter']['minOrderQty']
                 self.tick_size = instrument['priceFilter']['tickSize']
+                
             except Exception as e:
                 print("⚠️ Instrument info error:", e)
                 print(f"❌ Bot {self.bot['id']} exiting due to instrument info failure.")
                 return
 
             while self.running:
-                if self.check_stop_signal():
-                    break
+                now = datetime.now().timestamp()
+
+                # Check stop signal only if enough time has passed
+                if now - last_stop_check >= self.stop_check_interval:
+                    if self.check_stop_signal():
+                        break
+                    last_stop_check = now
 
                 try:
-                    price = self.get_price()
-                    if price is None:
-                        sleep(1)
+                    try:
+                        price = self.get_price()
+                        error_retries = 0  # reset if successful
+                    except Exception:
+                        error_retries += 1
+                        sleep(min(2 ** error_retries, 60))  # exponential backoff up to 60s
                         continue
 
                     pos = self.get_position()
