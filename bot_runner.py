@@ -225,7 +225,7 @@ class BotRunner:
                         unrealized = pos["unrealised_pnl"]
                         current_time = datetime.now().strftime('%H:%M:%S')
                         
-                        if pos["size"] > self.prev_order_size:
+                        if pos["size"] > float(self.prev_order_size):
                             tp_price = self.format_price(pos["avg_price"] * (1 + self.take_profit / 100))
                             if tp_price != self.last_tp_price:
                                 try:

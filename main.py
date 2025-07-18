@@ -11,7 +11,6 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "http://localhost:8000",
         "https://lord-arbiter.vercel.app",  # ← replace this if needed
     ],
     allow_credentials=True,
