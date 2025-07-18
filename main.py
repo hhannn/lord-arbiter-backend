@@ -2,22 +2,24 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dashboard import router as dashboard_router
+from dashboard import router as dashboard_router, lifespan
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
-# Allow frontend access (adjust origins in production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:8000",
         "https://your-frontend.vercel.app",
-    ],  # Replace with your frontend URL in production
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Mount the dashboard routes
 app.include_router(dashboard_router)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

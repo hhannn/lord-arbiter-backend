@@ -5,18 +5,19 @@ import math
 import threading
 import signal
 import psycopg2
+import traceback
 
 from time import sleep
 from datetime import datetime
 from decimal import Decimal, ROUND_DOWN
 from psycopg2.extras import RealDictCursor
 from pybit.unified_trading import HTTP
-from runner_registry import running_threads
+from runner_registry import running_threads, running_threads_lock
+from db import with_db_conn
 
 class BotRunner:
-    def __init__(self, bot_data, db_url):
+    def __init__(self, bot_data):
         self.bot = bot_data
-        self.db_url = db_url
         self.session = None
         self.symbol = bot_data["asset"]
         self.category = "linear"
@@ -50,21 +51,20 @@ class BotRunner:
         for i in range(0, len(data), size):
             yield data[i:i + size]
             sleep(1)
-
-    def get_db_conn(self):
-        return psycopg2.connect(self.db_url)
+    
+    def get_user_keys(self, user_id):
+        with with_db_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (user_id,))
+                return cur.fetchone()
 
     def get_session(self):
         try:
-            with self.get_db_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (self.bot["user_id"],))
-                    user = cur.fetchone()
+            user = self.get_user_keys(self.bot["user_id"])
+            if not user:
+                raise ValueError("User not found")
 
-                    if not user:
-                        raise ValueError("User not found")
-
-                    return HTTP(api_key=user["api_key"], api_secret=user["api_secret"], testnet=False)
+            return HTTP(api_key=user["api_key"], api_secret=user["api_secret"], testnet=False)
         except Exception as e:
             print(f"❌ Failed to create Bybit session: {e}")
             return None
@@ -92,7 +92,7 @@ class BotRunner:
 
     def check_stop_signal(self):
         try:
-            with self.get_db_conn() as conn:
+            with with_db_conn() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("SELECT status FROM bots WHERE id = %s", (self.bot["id"],))
                     result = cur.fetchone()
@@ -155,15 +155,14 @@ class BotRunner:
                     rebuy_prices.clear()
                     rebuy_sizes.clear()
                     
-                    initial_price = self.get_price()
-                    initial_qty = self.start_size / initial_price
+                    initial_qty = self.start_size / price
                     
                     base_qty = self.format_qty(initial_qty)
-                    tp_price = self.format_price(initial_price * (1 + self.take_profit / 100))
+                    tp_price = self.format_price(price * (1 + self.take_profit / 100))
                     
                     # Rebuy ladder
                     for x in range(self.max_rebuys):
-                        rebuy_price = self.format_price(initial_price * math.pow(1 - self.rebuy_percent / 100, x + 1))
+                        rebuy_price = self.format_price(price * math.pow(1 - self.rebuy_percent / 100, x + 1))
                         rebuy_qty = self.format_qty(initial_qty * math.pow(self.multiplier, x + 1))
                         rebuy_prices.append(rebuy_price)
                         rebuy_sizes.append(rebuy_qty)
@@ -211,10 +210,12 @@ class BotRunner:
 
                 sleep(self.poll_interval)
 
-            except Exception as e:
-                print(f"❌ Bot loop error: {e}")
-                sleep(3)
-
-        print(f"👋 Bot {self.bot['id']} exited.")
-        running_threads.pop(self.bot["id"], None)
-        print(f"🧹 Removed bot {self.bot['id']} from thread registry")
+            except Exception as fatal:
+                print(f"\n💥 Bot {self.bot['id']} crashed: {fatal}")
+                traceback.print_exc()
+                
+            finally: 
+                print(f"👋 Bot {self.bot['id']} exited.")
+                with running_threads_lock:
+                    running_threads.pop(self.bot["id"], None)
+                print(f"🧹 Removed bot {self.bot['id']} from thread registry")

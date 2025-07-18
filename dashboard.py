@@ -4,31 +4,61 @@ import psycopg2
 import os
 import threading
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Body
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pybit.unified_trading import HTTP
-from bybit_p2p import P2P
 from psycopg2.extras import RealDictCursor
 from typing import Dict
 
 from bot_runner import BotRunner  # This is the function you'll move your bot logic into
 from dotenv import load_dotenv
-from runner_registry import running_threads
+from runner_registry import running_threads, running_threads_lock
+from db import init_pool, get_conn, put_conn, close_pool, with_db_conn
 
 running_threads: Dict[int, threading.Thread] = {}
 load_dotenv()
-app = FastAPI()
-router = APIRouter()
-app.include_router(router)
-db_url = os.getenv("DATABASE_URL")
 
-try:
-    # Connect to the PostgreSQL database
-    conn = psycopg2.connect(db_url)
-    print("✅ Successfully connected to the database")
-except Exception as e:
-    print(f"❌ Failed to connect to the database: {e}")
-    raise HTTPException(status_code=500, detail="Database connection error")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        init_pool()  # ✅ Initialize pool on startup
+
+        try:
+            with with_db_conn() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT * FROM bots WHERE status = 'running'")
+                    bots = cur.fetchall()
+
+                    for bot in bots:
+                        bot_id = bot["id"]
+                        with running_threads_lock:
+                            if bot_id in running_threads and running_threads[bot_id].is_alive():
+                                continue
+
+                            runner = BotRunner(bot)
+                            thread = threading.Thread(target=runner.run, daemon=True)
+                            running_threads[bot_id] = thread
+                            thread.start()
+                            print(f"🔁 Resumed bot {bot_id}")
+                            
+        except Exception as e:
+            print("❌ Error in lifespan:", e)
+
+    except Exception as e:
+        print("❌ Failed to initialize DB pool or resume bots:", e)
+
+    yield
+    close_pool()
+    
+router = APIRouter()
+
+def get_user_keys(user_id):
+    with with_db_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (user_id,))
+            return cur.fetchone()
 
 class LoginPayload(BaseModel):
     api_key: str
@@ -65,28 +95,28 @@ def register_user(payload: RegisterPayload):
         raise HTTPException(status_code=401, detail="Invalid API credentials")
 
     try:
-        conn = psycopg2.connect(db_url)
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Check username
-            cur.execute("SELECT id FROM users WHERE username = %s", (payload.username,))
-            if cur.fetchone():
-                raise HTTPException(status_code=400, detail="Username already exists")
+        with with_db_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Check username
+                cur.execute("SELECT id FROM users WHERE username = %s", (payload.username,))
+                if cur.fetchone():
+                    raise HTTPException(status_code=400, detail="Username already exists")
 
-            # Check UID
-            cur.execute("SELECT id FROM users WHERE uid = %s", (uid,))
-            if cur.fetchone():
-                raise HTTPException(status_code=400, detail="Bybit account already registered")
+                # Check UID
+                cur.execute("SELECT id FROM users WHERE uid = %s", (uid,))
+                if cur.fetchone():
+                    raise HTTPException(status_code=400, detail="Bybit account already registered")
 
-            # Insert new user
-            cur.execute("""
-                INSERT INTO users (username, password, api_key, api_secret, uid)
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id
-            """, (payload.username, payload.password, payload.api_key, payload.api_secret, uid))
+                # Insert new user
+                cur.execute("""
+                    INSERT INTO users (username, password, api_key, api_secret, uid)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (payload.username, payload.password, payload.api_key, payload.api_secret, uid))
 
-            new_user = cur.fetchone()
-            conn.commit()
-            return {"user_id": new_user["id"]}
+                new_user = cur.fetchone()
+                conn.commit()
+                return {"user_id": new_user["id"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail="Database error")
     finally:
@@ -99,21 +129,21 @@ class LoginPayload(BaseModel):
 @router.post("/api/user/login")
 def login_user(payload: LoginPayload):
     try:
-        conn = psycopg2.connect(db_url)
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE username = %s", (payload.username,))
-            user = cur.fetchone()
+        with with_db_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM users WHERE username = %s", (payload.username,))
+                user = cur.fetchone()
 
-            if not user or user["password"] != payload.password:
-                raise HTTPException(status_code=401, detail="Invalid credentials")
+                if not user or user["password"] != payload.password:
+                    raise HTTPException(status_code=401, detail="Invalid credentials")
 
-            return {
-                "user_id": user["id"],
-                "username": user["username"],
-                "uid": user["uid"],  # 👈 Add this
-                "api_key": user["api_key"],
-                "api_secret": user["api_secret"],
-            }
+                return {
+                    "user_id": user["id"],
+                    "username": user["username"],
+                    "uid": user["uid"],  # 👈 Add this
+                    "api_key": user["api_key"],
+                    "api_secret": user["api_secret"],
+                }
     except Exception as e:
         raise HTTPException(status_code=500, detail="Login failed")
     finally:
@@ -145,13 +175,13 @@ def get_user_data(payload: APIKeyPayload):
     
 @router.post("/api/user/bots")
 def get_bot_data(payload: UserPayload):
-    conn = psycopg2.connect(db_url)
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM bots WHERE id = %s", (1,))
-            result = cur.fetchone()
-            print("Result:", result)
-            return result
+        with with_db_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM bots WHERE user_id = %s", (payload.user_id,))
+                result = cur.fetchone()
+                print("Result:", result)
+                return result
     except Exception as e:
         print("❌ Query failed:", e)
         conn.rollback()
@@ -162,39 +192,51 @@ def get_bot_data(payload: UserPayload):
 @router.post("/api/bots/start/{bot_id}")
 def start_bot(bot_id: int, background_tasks: BackgroundTasks):
     try:
-        with psycopg2.connect(db_url) as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT * FROM bots WHERE id = %s AND status = 'idle'", (bot_id,))
-                bot = cur.fetchone()
+        with running_threads_lock:  # Lock thread registry first
+            with with_db_conn() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Lock the row in DB
+                    cur.execute("""
+                        SELECT * FROM bots
+                        WHERE id = %s AND status = 'idle'
+                        FOR UPDATE
+                    """, (bot_id,))
+                    bot = cur.fetchone()
 
-                if not bot:
-                    raise HTTPException(404, "Bot not found or already running")
+                    if not bot:
+                        raise HTTPException(404, "Bot not found or already running")
 
-                cur.execute("UPDATE bots SET status = 'running' WHERE id = %s", (bot_id,))
-                conn.commit()
+                    # Ensure no thread is already running
+                    if bot_id in running_threads and running_threads[bot_id].is_alive():
+                        raise HTTPException(status_code=400, detail="Bot is already running")
 
-        runner = BotRunner(bot, db_url)
-        if bot_id in running_threads and running_threads[bot_id].is_alive():
-            raise HTTPException(status_code=400, detail="Bot is already running")
+                    # Update DB to running
+                    cur.execute("UPDATE bots SET status = 'running' WHERE id = %s", (bot_id,))
+                    conn.commit()
 
-        thread = threading.Thread(target=runner.run, daemon=True)
-        running_threads[bot_id] = thread
-        thread.start()
+                    # Start the bot
+                    runner = BotRunner(bot)
+                    thread = threading.Thread(target=runner.run, daemon=True)
+                    running_threads[bot_id] = thread
+                    thread.start()
 
         return {"message": f"Bot {bot_id} started"}
+
     except Exception as e:
         print(f"❌ Start error: {e}")
-        raise HTTPException(500, "Bot start failed")
+        raise HTTPException(status_code=500, detail="Bot start failed")
+
 
         
 @router.post("/api/bots/stop/{bot_id}")
 def stop_bot(bot_id: int):
     try:
-        conn = psycopg2.connect(db_url)
-        with conn.cursor() as cur:
-            cur.execute("UPDATE bots SET status = 'stopping' WHERE id = %s", (bot_id,))
-            conn.commit()
-        return {"message": f"🛑 Stop signal sent for bot {bot_id}"}
+        with with_db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM bots WHERE id = %s FOR UPDATE", (bot_id,))
+                if cur.fetchone() is None:
+                    raise HTTPException(404, "Bot not found")
+                cur.execute("UPDATE bots SET status = 'stopping' WHERE id = %s", (bot_id,))
     except Exception as e:
         print(f"❌ Error stopping bot: {e}")
         raise HTTPException(status_code=500, detail="Failed to stop bot")
@@ -208,16 +250,12 @@ def get_bot_position(payload: BotPositionPayload):
 
     if not asset or not user_id:
         raise HTTPException(status_code=400, detail="Missing asset or user_id")
-
-    conn = None
+    
     try:
-        conn = psycopg2.connect(db_url)
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (user_id,))
-            user = cur.fetchone()
+        user = get_user_keys(payload.user_id)
 
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
         # Call Bybit
         session = HTTP(api_key=user["api_key"], api_secret=user["api_secret"])
@@ -232,33 +270,6 @@ def get_bot_position(payload: BotPositionPayload):
     except Exception as e:
         print(f"❌ Error in get_bot_position: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
-    finally:
-        if conn:
-            conn.close()
-
-@app.on_event("startup")
-def resume_running_bots():
-    try:
-        conn = psycopg2.connect(db_url)
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM bots WHERE status = 'running'")
-            bots = cur.fetchall()
-
-            for bot in bots:
-                bot_id = bot["id"]
-                if bot_id in running_threads and running_threads[bot_id].is_alive():
-                    continue  # Already running
-
-                runner = BotRunner(bot, db_url)
-                thread = threading.Thread(target=runner.run, daemon=True)
-                running_threads[bot_id] = thread
-                thread.start()
-                print(f"🔁 Resumed bot {bot_id}")
-    except Exception as e:
-        print("❌ Failed to resume bots on startup:", e)
-    finally:
-        conn.close()
     
 
 
