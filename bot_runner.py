@@ -116,7 +116,7 @@ class BotRunner:
     def run(self):
         print(f"🚀 Running bot for {self.symbol} with {self.start_size} USDT")
         
-        self.stop_check_interval = 30
+        self.stop_check_interval = 5
         last_stop_check = 0
         
         rebuy_prices = []

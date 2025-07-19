@@ -259,23 +259,26 @@ def create_bot(payload: CreateBotPayload, request: Request):
 @router.post("/api/bots/start/{bot_id}")
 def start_bot(bot_id: int, background_tasks: BackgroundTasks):
     try:
-        with running_threads_lock:  # Lock thread registry first
-            with with_db_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    # Lock the row in DB
-                    cur.execute("""
-                        SELECT * FROM bots
-                        WHERE id = %s AND status = 'idle'
-                        FOR UPDATE
-                    """, (bot_id,))
-                    bot = cur.fetchone()
+        with with_db_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("BEGIN;")
+                # Lock the row in DB
+                cur.execute("""
+                    SELECT * FROM bots
+                    WHERE id = %s AND status = 'idle'
+                    FOR UPDATE
+                """, (bot_id,))
+                bot = cur.fetchone()
 
-                    if not bot:
-                        raise HTTPException(404, "Bot not found or already running")
+                if not bot:
+                    cur.execute("ROLLBACK;")
+                    raise HTTPException(404, "Bot not found or already running")
 
-                    # Ensure no thread is already running
-                    if bot_id in running_threads and running_threads[bot_id].is_alive():
-                        raise HTTPException(status_code=400, detail="Bot is already running")
+                # Ensure no thread is already running
+                if bot_id in running_threads and running_threads[bot_id].is_alive():
+                    cur.execute("ROLLBACK;")
+                    raise HTTPException(status_code=400, detail="Bot is already running")
+                with running_threads_lock:  # Lock thread registry first
 
                     # Update DB to running
                     cur.execute("UPDATE bots SET status = 'running' WHERE id = %s", (bot_id,))
