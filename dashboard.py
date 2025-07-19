@@ -239,6 +239,7 @@ def create_bot(payload: CreateBotPayload, request: Request):
                     "idle",              # default status
                     int(user_id)
                 ))
+                print("Final user ID: ", int(user_id))
 
                 new_bot = cur.fetchone()
                 conn.commit()
