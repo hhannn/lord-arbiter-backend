@@ -54,11 +54,40 @@ async def lifespan(app: FastAPI):
     
 router = APIRouter()
 
+# API cache
+_dashboard_user_keys_cache = {}
+_dashboard_user_keys_cache_lock = threading.Lock()
+
 def get_user_keys(user_id):
-    with with_db_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (user_id,))
-            return cur.fetchone()
+    # Ensure user_id is an integer for consistent caching and DB query
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        print(f"❌ Invalid user_id format received: {user_id}")
+        return None
+
+    # Check cache first
+    with _dashboard_user_keys_cache_lock:
+        if user_id in _dashboard_user_keys_cache:
+            # print(f"DEBUG: Dashboard: User keys for {user_id} found in cache.")
+            return _dashboard_user_keys_cache[user_id]
+
+    # If not in cache, fetch from DB
+    print(f"DEBUG: Dashboard: User keys for {user_id} not in cache, fetching from DB.")
+    try:
+        with with_db_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (user_id,))
+                user_keys = cur.fetchone()
+                if user_keys:
+                    with _dashboard_user_keys_cache_lock:
+                        _dashboard_user_keys_cache[user_id] = user_keys # Store in cache
+                    return user_keys
+                return None
+    except Exception as e:
+        print(f"❌ Error fetching user keys for {user_id} from DB (Dashboard): {e}")
+        traceback.print_exc() # Print traceback for dashboard errors
+        return None
 
 class LoginPayload(BaseModel):
     username: str
