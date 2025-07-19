@@ -5,7 +5,7 @@ import os
 import threading
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Body
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Body, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pybit.unified_trading import HTTP
@@ -127,7 +127,7 @@ class LoginPayload(BaseModel):
     password: str
 
 @router.post("/api/user/login")
-def login_user(payload: LoginPayload):
+def login_user(payload: LoginPayload, response: Response):
     try:
         with with_db_conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -136,13 +136,20 @@ def login_user(payload: LoginPayload):
 
                 if not user or user["password"] != payload.password:
                     raise HTTPException(status_code=401, detail="Invalid credentials")
+                
+                # ✅ Set cookie here
+                response.set_cookie(
+                    key="user_id",
+                    value=str(user["id"]),
+                    httponly=False,
+                    samesite="Lax",  # or "None" if cross-site on HTTPS
+                    secure=True      # ⚠️ Required for cookies to be sent over HTTPS
+                )
 
                 return {
                     "user_id": user["id"],
                     "username": user["username"],
                     "uid": user["uid"],  # 👈 Add this
-                    "api_key": user["api_key"],
-                    "api_secret": user["api_secret"],
                 }
     except Exception as e:
         raise HTTPException(status_code=500, detail="Login failed")
@@ -150,13 +157,21 @@ def login_user(payload: LoginPayload):
         conn.close()
 
 
-@router.post("/api/user/data")
-def get_user_data(payload: APIKeyPayload):
+@router.get("/api/user/data")
+def get_user_data(request: Request):
+    user_id = request.cookies.get("user_id")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user = get_user_keys(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     try:
         session = HTTP(
             testnet=False,
-            api_key=payload.apiKey,
-            api_secret=payload.apiSecret
+            api_key=user.apiKey,
+            api_secret=user.apiSecret
         )
 
         balance_data = session.get_wallet_balance(accountType="UNIFIED")
