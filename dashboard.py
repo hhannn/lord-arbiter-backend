@@ -3,6 +3,7 @@
 import psycopg2
 import os
 import threading
+import traceback
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Body, Response, Request
@@ -17,7 +18,6 @@ from dotenv import load_dotenv
 from runner_registry import running_threads, running_threads_lock
 from db import init_pool, get_conn, put_conn, close_pool, with_db_conn
 
-running_threads: Dict[int, threading.Thread] = {}
 load_dotenv()
 
 @asynccontextmanager
@@ -301,18 +301,46 @@ def start_bot(bot_id: int, background_tasks: BackgroundTasks):
         
 @router.post("/api/bots/stop/{bot_id}")
 def stop_bot(bot_id: int):
+    conn = None # Initialize conn for outer except block
     try:
+        # First, update DB status to 'stopping'
         with with_db_conn() as conn:
             with conn.cursor() as cur:
+                cur.execute("BEGIN;") 
                 cur.execute("SELECT id FROM bots WHERE id = %s FOR UPDATE", (bot_id,))
                 if cur.fetchone() is None:
+                    cur.execute("ROLLBACK;")
                     raise HTTPException(404, "Bot not found")
+                
                 cur.execute("UPDATE bots SET status = 'stopping' WHERE id = %s", (bot_id,))
+                conn.commit()
+                print(f"DEBUG: Bot {bot_id} status updated to 'stopping' in DB.")
+        
+        # Then, signal the in-memory thread directly
+        with running_threads_lock:
+            if bot_id in running_threads:
+                runner_instance = running_threads[bot_id]
+                if isinstance(runner_instance, BotRunner): # Ensure it's a BotRunner instance
+                    runner_instance.stop_event.set() # <--- Set the event
+                    print(f"DEBUG: Signaled bot {bot_id} via threading.Event.")
+                else:
+                    print(f"WARNING: Bot {bot_id} in registry is not a BotRunner instance.")
+            else:
+                print(f"WARNING: Bot {bot_id} not found in in-memory registry. Relying on DB poll.")
+                # This is okay, the bot will eventually stop when it polls the DB.
+
+        return {"message": f"Bot {bot_id} stop initiated."}
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        print(f"❌ Error stopping bot: {e}")
-        raise HTTPException(status_code=500, detail="Failed to stop bot")
-    finally:
-        conn.close()
+        print(f"❌ Error stopping bot {bot_id}: {e}")
+        traceback.print_exc()
+        if conn:
+            try:
+                conn.rollback() 
+            except Exception as rb_exc:
+                print(f"ERROR: Failed to rollback connection for bot {bot_id}: {rb_exc}")
+        raise HTTPException(status_code=500, detail="Failed to stop bot due to an internal error.")
 
 @router.post("/api/bot/position")
 def get_bot_position(payload: BotPositionPayload):
