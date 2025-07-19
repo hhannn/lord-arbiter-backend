@@ -141,9 +141,9 @@ def login_user(payload: LoginPayload, response: Response):
                 response.set_cookie(
                     key="user_id",
                     value=str(user["id"]),
-                    httponly=False,
-                    samesite="Lax",  # or "None" if cross-site on HTTPS
-                    secure=True      # ⚠️ Required for cookies to be sent over HTTPS
+                    httponly=True,
+                    samesite="None",  # or "None" if cross-site on HTTPS
+                    secure=False      # ⚠️ Required for cookies to be sent over HTTPS
                 )
 
                 return {
