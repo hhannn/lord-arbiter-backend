@@ -25,6 +25,15 @@ class BotRunner:
         self.running = True
         self.stop_requested_via_db = False
         self.db_status_on_exit = "idle"
+        
+        # Cache for user API keys (class-level cache)
+        # This dictionary will store fetched API keys for all users
+        if not hasattr(BotRunner, '_user_keys_cache'):
+            BotRunner._user_keys_cache = {}
+            
+        self.user_id = bot_data["user_id"]
+        self.user_api_key = None
+        self.user_api_secret = None
 
         # bot settings
         self.start_size = float(bot_data["start_size"])
@@ -56,20 +65,36 @@ class BotRunner:
             sleep(1)
     
     def get_user_keys(self, user_id):
-        with with_db_conn() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (user_id,))
-                return cur.fetchone()
+        # Check cache first
+        if user_id in BotRunner._user_keys_cache:
+            print(f"DEBUG: Bot {self.bot['id']}: User keys for {user_id} found in cache.")
+            return BotRunner._user_keys_cache[user_id]
+
+        # If not in cache, fetch from DB
+        print(f"DEBUG: Bot {self.bot['id']}: User keys for {user_id} not in cache, fetching from DB.")
+        try:
+            with with_db_conn() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (user_id,))
+                    user_keys = cur.fetchone()
+                    if user_keys:
+                        BotRunner._user_keys_cache[user_id] = user_keys # Store in cache
+                        return user_keys
+                    return None
+        except Exception as e:
+            print(f"❌ Error fetching user keys for {user_id} from DB: {e}")
+            return None
 
     def get_session(self):
         try:
-            user = self.get_user_keys(self.bot["user_id"])
+            # This call will now use the caching get_user_keys
+            user = self.get_user_keys(self.user_id) 
             if not user:
-                raise ValueError("User not found")
+                raise ValueError(f"User API keys not found for user_id {self.user_id}.")
 
             return HTTP(api_key=user["api_key"], api_secret=user["api_secret"], testnet=False)
         except Exception as e:
-            print(f"❌ Failed to create Bybit session: {e}")
+            print(f"❌ Failed to create Bybit session for bot {self.bot['id']}: {e}")
             return None
 
     def get_price(self):
