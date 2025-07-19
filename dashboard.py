@@ -218,7 +218,7 @@ def create_bot(payload: CreateBotPayload, request: Request):
 
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
-
+    print("🧪 user_id received:", user_id)
     try:
         with with_db_conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
