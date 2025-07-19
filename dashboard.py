@@ -278,6 +278,7 @@ def start_bot(bot_id: int, background_tasks: BackgroundTasks):
                 if bot_id in running_threads and running_threads[bot_id].is_alive():
                     cur.execute("ROLLBACK;")
                     raise HTTPException(status_code=400, detail="Bot is already running")
+                
                 with running_threads_lock:  # Lock thread registry first
 
                     # Update DB to running

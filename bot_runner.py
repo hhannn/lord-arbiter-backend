@@ -23,6 +23,8 @@ class BotRunner:
         self.category = "linear"
         self.poll_interval = 5
         self.running = True
+        self.stop_requested_via_db = False
+        self.db_status_on_exit = "idle"
 
         # bot settings
         self.start_size = float(bot_data["start_size"])
@@ -92,26 +94,20 @@ class BotRunner:
             return None
 
     def check_stop_signal(self):
-        try:
-            # 1. Check if bot status is "stopping"
-            with with_db_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("SELECT status FROM bots WHERE id = %s", (self.bot["id"],))
-                    result = cur.fetchone()
-                    if result and result["status"] == "stopping":
-                        print("🛑 Stop requested via DB. Exiting...")
-
-            # 2. Set bot status back to idle using a new connection
-            with with_db_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("UPDATE bots SET status = 'idle' WHERE id = %s", (self.bot["id"],))
-                    conn.commit()
-
-            return result and result["status"] == "stopping"
-
-        except Exception as e:
-            print("❌ Stop check error:", e)
-        return False
+            try:
+                with with_db_conn() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT status FROM bots WHERE id = %s", (self.bot["id"],))
+                        result = cur.fetchone()
+                        if result and result["status"] == "stopping":
+                            print(f"🛑 Stop requested via DB for bot {self.bot['id']}.")
+                            self.stop_requested_via_db = True # Set an internal flag
+                            return True
+                return False
+            except Exception as e:
+                print(f"❌ Stop check error for bot {self.bot['id']}: {e}")
+                # Consider setting self.running = False here if DB error means bot can't continue
+            return False
 
     def run(self):
         print(f"🚀 Running bot for {self.symbol} with {self.start_size} USDT")
