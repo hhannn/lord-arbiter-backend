@@ -222,6 +222,7 @@ def create_bot(payload: CreateBotPayload, request: Request):
     try:
         with with_db_conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                print("Final user ID: ", int(user_id))
                 cur.execute("""
                     INSERT INTO bots (
                         asset, start_size, leverage, multiplier,
@@ -239,7 +240,6 @@ def create_bot(payload: CreateBotPayload, request: Request):
                     "idle",              # default status
                     int(user_id)
                 ))
-                print("Final user ID: ", int(user_id))
 
                 new_bot = cur.fetchone()
                 conn.commit()
