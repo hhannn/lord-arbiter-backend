@@ -170,8 +170,8 @@ def get_user_data(request: Request):
     try:
         session = HTTP(
             testnet=False,
-            api_key=user.apiKey,
-            api_secret=user.apiSecret
+            api_key=user["api_key"],
+            api_secret=user["api_secret"]
         )
 
         balance_data = session.get_wallet_balance(accountType="UNIFIED")
