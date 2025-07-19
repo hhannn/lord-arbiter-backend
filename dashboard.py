@@ -61,6 +61,8 @@ def get_user_keys(user_id):
             return cur.fetchone()
 
 class LoginPayload(BaseModel):
+    username: str
+    password: str
     api_key: str
     api_secret: str
     uid: str  # Optional: generated from bybit or client
@@ -84,6 +86,14 @@ class RegisterPayload(BaseModel):
     password: str
     api_key: str
     api_secret: str
+    
+class CreateBotPayload(BaseModel):
+    asset: str
+    start_size: float
+    leverage: int
+    multiplier: float
+    take_profit: float
+    rebuy: float
 
 @router.post("/api/user/register")
 def register_user(payload: RegisterPayload):
@@ -121,10 +131,6 @@ def register_user(payload: RegisterPayload):
         raise HTTPException(status_code=500, detail="Database error")
     finally:
         conn.close()
-        
-class LoginPayload(BaseModel):
-    username: str
-    password: str
 
 @router.post("/api/user/login")
 def login_user(payload: LoginPayload, response: Response):
@@ -189,11 +195,13 @@ def get_user_data(request: Request):
         raise HTTPException(status_code=500, detail="Failed to fetch data from Bybit")
     
 @router.post("/api/user/bots")
-def get_bot_data(payload: UserPayload):
+def get_bot_data(request: Request):
+    user_id = request.cookies.get("user_id")
+    
     try:
         with with_db_conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT * FROM bots WHERE user_id = %s", (payload.user_id,))
+                cur.execute("SELECT * FROM bots WHERE user_id = %s", (user_id,))
                 result = cur.fetchone()
                 print("Result:", result)
                 return result
@@ -203,6 +211,41 @@ def get_bot_data(payload: UserPayload):
         raise HTTPException(status_code=500, detail="Query error")
     finally:
         conn.close()
+        
+@router.post("/api/bots/create")
+def create_bot(payload: CreateBotPayload, request: Request):
+    user_id = request.cookies.get("user_id")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        with with_db_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO bots (
+                        asset, start_size, leverage, multiplier,
+                        take_profit, rebuy, status, user_id, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    RETURNING *;
+                """, (
+                    payload.asset,
+                    payload.start_size,
+                    payload.leverage,
+                    payload.multiplier,
+                    payload.take_profit,
+                    payload.rebuy,
+                    "idle",              # default status
+                    int(user_id)
+                ))
+
+                new_bot = cur.fetchone()
+                conn.commit()
+                return new_bot
+    except Exception as e:
+        print("❌ Error inserting bot:", e)
+        raise HTTPException(status_code=500, detail="Failed to create bot")
 
 @router.post("/api/bots/start/{bot_id}")
 def start_bot(bot_id: int, background_tasks: BackgroundTasks):
