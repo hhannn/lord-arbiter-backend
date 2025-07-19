@@ -143,7 +143,7 @@ def login_user(payload: LoginPayload, response: Response):
                     value=str(user["id"]),
                     httponly=True,
                     samesite="None",  # or "None" if cross-site on HTTPS
-                    secure=False      # ⚠️ Required for cookies to be sent over HTTPS
+                    secure=True      # ⚠️ Required for cookies to be sent over HTTPS
                 )
 
                 return {
