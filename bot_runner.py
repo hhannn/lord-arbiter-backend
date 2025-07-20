@@ -39,6 +39,7 @@ class BotRunner:
 
         # bot settings
         self.start_size = float(bot_data["start_size"])
+        self.start_type = str(bot_data["start_type"])
         self.leverage = int(bot_data["leverage"])
         self.multiplier = float(bot_data["multiplier"])
         self.take_profit = float(bot_data["take_profit"])
@@ -320,7 +321,21 @@ class BotRunner:
                     rebuy_prices.clear()
                     rebuy_sizes.clear()
                     
-                    initial_qty = self.start_size / price
+                    if (self.start_type == "USDT"):
+                        initial_qty = self.start_size / price
+                    else:
+                        try:
+                            wallet = self.session.get_wallet_balance(accountType="UNIFIED")
+                            # Ensure the path exists and values are convertible
+                            equity_str = wallet["result"]["list"][0]["totalEquity"]
+                            equity = float(equity_str)
+
+                            initial_qty = (equity * float(self.start_size) / 100) / price
+                        except Exception as e:
+                            print(f"❌ Bot {self.bot['id']}: Error fetching wallet balance or calculating equity-based initial quantity: {e}")
+                            self.running = False
+                            self.db_status_on_exit = "error"
+                            return
                     
                     base_qty = self.format_qty(initial_qty)
                     tp_price = self.format_price(price * (1 + self.take_profit / 100))

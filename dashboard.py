@@ -120,6 +120,7 @@ class CreateBotPayload(BaseModel):
     multiplier: float
     take_profit: float
     rebuy: float
+    start_type: str
 
 @router.post("/api/user/register")
 def register_user(payload: RegisterPayload):
@@ -255,14 +256,15 @@ def create_bot(payload: CreateBotPayload, request: Request):
                     payload.take_profit,
                     payload.rebuy,
                     "idle",
-                    int(user_id)
+                    int(user_id),
+                    payload.start_type
                 ))
                 cur.execute("""
                     INSERT INTO bots (
                         asset, start_size, leverage, multiplier,
-                        take_profit, rebuy, status, user_id, created_at
+                        take_profit, rebuy, status, user_id, created_at, start_type
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
                     RETURNING *;
                 """, (
                     payload.asset,
@@ -272,7 +274,8 @@ def create_bot(payload: CreateBotPayload, request: Request):
                     payload.take_profit,
                     payload.rebuy,
                     "idle",              # default status
-                    int(user_id)
+                    int(user_id),
+                    payload.start_type
                 ))
 
                 new_bot = cur.fetchone()
