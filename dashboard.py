@@ -92,9 +92,6 @@ def get_user_keys(user_id):
 class LoginPayload(BaseModel):
     username: str
     password: str
-    api_key: str
-    api_secret: str
-    uid: str  # Optional: generated from bybit or client
 
 class UserPayload(BaseModel):
     name: str
