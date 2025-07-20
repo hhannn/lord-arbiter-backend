@@ -22,7 +22,7 @@ class BotRunner:
         self.symbol = bot_data["asset"]
         self.category = "linear"
         self.poll_interval = 5
-        self.stop_check_interval = 15
+        self.stop_check_interval = 60
         self.running = True
         self.stop_requested_via_db = False
         self.db_status_on_exit = "error"
