@@ -1,20 +1,17 @@
 # dashboard.py
 
-import psycopg2
-import os
 import threading
 import traceback
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Body, Response, Request
-from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Response, Request
 from pydantic import BaseModel
 from pybit.unified_trading import HTTP
 from psycopg2.extras import RealDictCursor
-from typing import Dict, Set, Any, Union
 
 # CHANGED: Import get_user_keys and _user_keys_smart_cache from db.py
-from db import init_pool, get_conn, put_conn, close_pool, with_db_conn, get_user_keys, _user_keys_smart_cache
+from db import init_pool, close_pool, with_db_conn, get_user_keys, _user_keys_smart_cache
 
 from bot_runner import BotRunner # This import is fine as bot_runner no longer imports dashboard
 from dotenv import load_dotenv
@@ -92,6 +89,16 @@ class CreateBotPayload(BaseModel):
     take_profit: float
     rebuy: float
     start_type: str
+    
+class EditBotPayload(BaseModel):
+    # All fields should be optional for an edit, as not all might be changed
+    asset: Optional[str] = None
+    start_size: Optional[float] = None
+    leverage: Optional[int] = None
+    multiplier: Optional[float] = None
+    take_profit: Optional[float] = None
+    rebuy: Optional[float] = None
+    start_type: Optional[str] = None
 
 # --- API Endpoints ---
 
@@ -268,6 +275,83 @@ def create_bot(payload: CreateBotPayload, request: Request):
         print("❌ Error inserting bot:", e)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to create bot")
+    
+@router.put("/api/bots/edit/{bot_id}") # Using PUT for updates
+def edit_bot(bot_id: int, payload: EditBotPayload, request: Request):
+    user_id = request.cookies.get("user_id")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        user_id_int = int(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID format.")
+
+    try:
+        with with_db_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # 1. Fetch bot and check ownership/status
+                cur.execute("SELECT status, user_id FROM bots WHERE id = %s FOR UPDATE", (bot_id,))
+                existing_bot = cur.fetchone()
+
+                if not existing_bot:
+                    raise HTTPException(status_code=404, detail="Bot not found.")
+                if existing_bot["user_id"] != user_id_int:
+                    raise HTTPException(status_code=403, detail="Not authorized to edit this bot.")
+                if existing_bot["status"].lower() == "running":
+                    # This check is crucial and matches frontend logic
+                    raise HTTPException(status_code=400, detail="Cannot edit a running bot. Please stop it first.")
+
+                # 2. Construct dynamic UPDATE query
+                update_fields = []
+                update_values = []
+                # Iterate over payload fields and add to update if not None
+                if payload.asset is not None:
+                    update_fields.append("asset = %s")
+                    update_values.append(payload.asset)
+                if payload.start_size is not None:
+                    update_fields.append("start_size = %s")
+                    update_values.append(payload.start_size)
+                if payload.leverage is not None:
+                    update_fields.append("leverage = %s")
+                    update_values.append(payload.leverage)
+                if payload.multiplier is not None:
+                    update_fields.append("multiplier = %s")
+                    update_values.append(payload.multiplier)
+                if payload.take_profit is not None:
+                    update_fields.append("take_profit = %s")
+                    update_values.append(payload.take_profit)
+                if payload.rebuy is not None:
+                    update_fields.append("rebuy = %s")
+                    update_values.append(payload.rebuy)
+                if payload.start_type is not None:
+                    update_fields.append("start_type = %s")
+                    update_values.append(payload.start_type)
+
+                if not update_fields:
+                    raise HTTPException(status_code=400, detail="No fields provided for update.")
+
+                query = f"UPDATE bots SET {', '.join(update_fields)} WHERE id = %s RETURNING *;"
+                update_values.append(bot_id) # Add bot_id to the end of values for WHERE clause
+
+                cur.execute(query, tuple(update_values))
+                updated_bot = cur.fetchone()
+                conn.commit()
+
+                if not updated_bot:
+                    # This case should ideally not be hit if existing_bot was found
+                    raise HTTPException(status_code=500, detail="Bot update failed unexpectedly.")
+
+                return updated_bot
+
+    except HTTPException as e:
+        # Re-raise explicit HTTPExceptions
+        raise e
+    except Exception as e:
+        print(f"❌ Error editing bot {bot_id}: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to edit bot due to an internal error.")
 
 @router.post("/api/bots/start/{bot_id}")
 def start_bot(bot_id: int, background_tasks: BackgroundTasks):
