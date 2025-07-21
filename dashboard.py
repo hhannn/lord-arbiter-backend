@@ -13,73 +13,28 @@ from pybit.unified_trading import HTTP
 from psycopg2.extras import RealDictCursor
 from typing import Dict, Set, Any, Union
 
-from bot_runner import BotRunner
+# CHANGED: Import get_user_keys and _user_keys_smart_cache from db.py
+from db import init_pool, get_conn, put_conn, close_pool, with_db_conn, get_user_keys, _user_keys_smart_cache
+
+from bot_runner import BotRunner # This import is fine as bot_runner no longer imports dashboard
 from dotenv import load_dotenv
 from runner_registry import running_threads, running_threads_lock
-# Import the SmartCache instance from db.py
-from db import init_pool, get_conn, put_conn, close_pool, with_db_conn, _user_keys_smart_cache
 
 load_dotenv()
 
-def get_user_keys(user_id: Union[int, str]) -> Union[Dict[str, Any], None]:
-    """
-    Fetches user API keys for a single user, prioritizing the SmartCache.
-    This function is used by individual requests and BotRunner instances.
-    """
-    try:
-        user_id_int = int(user_id)
-    except ValueError:
-        print(f"❌ Invalid user_id format received in get_user_keys: {user_id}")
-        return None
-
-    # Try to get from the smart cache first
-    cached_keys = _user_keys_smart_cache.get(user_id_int)
-    if cached_keys:
-        return cached_keys
-
-    # If not in cache or expired, fetch from DB (single query)
-    print(f"DEBUG: Dashboard: User keys for {user_id_int} not in cache, fetching from DB (single query).")
-    try:
-        with with_db_conn() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT api_key, api_secret FROM users WHERE id = %s", (user_id_int,))
-                user_keys = cur.fetchone()
-                if user_keys:
-                    _user_keys_smart_cache.set(user_id_int, user_keys) # Store newly fetched key in cache
-                    return user_keys
-                return None
-    except Exception as e:
-        print(f"❌ Error fetching user keys for {user_id_int} from DB (Dashboard): {e}")
-        traceback.print_exc()
-        return None
-
+router = APIRouter()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    FastAPI lifespan event handler.
-    Initializes DB pool and resumes running bots.
-    (No batch pre-population of cache in this version)
-    """
     try:
         init_pool()
 
         try:
             with with_db_conn() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    # Fetch all necessary bot data to resume
                     cur.execute("SELECT * FROM bots WHERE status = 'running'")
                     bots_to_resume = cur.fetchall()
 
-                    # Removed batch fetching and smart cache pre-population
-                    # unique_user_ids = set()
-                    # for bot in bots_to_resume: unique_user_ids.add(bot["user_id"])
-                    # if unique_user_ids:
-                    #     all_user_keys_map = get_multiple_user_keys(list(unique_user_ids))
-                    #     print(f"✅ Pre-populated cache with {len(all_user_keys_map)} user keys for resuming bots.")
-
-                    # Now, restart the bots. Their BotRunner instances will call get_user_keys
-                    # which will use the smart cache on an individual basis.
                     for bot in bots_to_resume:
                         bot_id = bot["id"]
                         with running_threads_lock:
@@ -87,7 +42,6 @@ async def lifespan(app: FastAPI):
                                 print(f"⚠️ Bot {bot_id} already running, skipping resume.")
                                 continue
 
-                            # Create and start the BotRunner thread
                             runner = BotRunner(bot)
                             thread = threading.Thread(target=runner.run, daemon=True)
                             running_threads[bot_id] = thread
@@ -102,12 +56,10 @@ async def lifespan(app: FastAPI):
         print("❌ Failed to initialize DB pool or resume bots (outer error):", e)
         traceback.print_exc()
 
-    yield # Yield control to the application
-    close_pool() # Close DB pool when application shuts down
+    yield
+    close_pool()
 
-router = APIRouter()
-
-# --- Pydantic Models (unchanged, but included for context) ---
+# --- Pydantic Models (unchanged) ---
 class LoginPayload(BaseModel):
     username: str
     password: str
@@ -141,7 +93,7 @@ class CreateBotPayload(BaseModel):
     rebuy: float
     start_type: str
 
-# --- API Endpoints (unchanged, but included for context) ---
+# --- API Endpoints ---
 
 @router.post("/api/user/register")
 def register_user(payload: RegisterPayload):
@@ -189,7 +141,6 @@ def login_user(payload: LoginPayload, response: Response):
                 if not user or user["password"] != payload.password:
                     raise HTTPException(status_code=401, detail="Invalid credentials")
 
-                # Set cookie
                 response.set_cookie(
                     key="user_id",
                     value=str(user["id"]),
@@ -197,7 +148,7 @@ def login_user(payload: LoginPayload, response: Response):
                     samesite="None",
                     secure=True
                 )
-                # Invalidate cache for this user on login, to ensure fresh keys are loaded next time
+                # Invalidate cache for this user on login
                 _user_keys_smart_cache.invalidate(user["id"])
 
                 return {
@@ -220,8 +171,7 @@ def get_user_data(request: Request):
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    # This will use the smart cache
-    user = get_user_keys(user_id)
+    user = get_user_keys(user_id) # Now calls get_user_keys from db.py
     if not user:
         raise HTTPException(status_code=404, detail="User not found or keys unavailable")
     try:
@@ -399,9 +349,7 @@ def get_bot_position(payload: BotPositionPayload):
     if not asset or not user_id:
         raise HTTPException(status_code=400, detail="Missing asset or user_id")
 
-    # This will use the smart cache
-    user = get_user_keys(user_id)
-
+    user = get_user_keys(user_id) # Now calls get_user_keys from db.py
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
