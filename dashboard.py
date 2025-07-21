@@ -515,7 +515,9 @@ def get_bot_position(payload: BotPositionPayload):
 
         return {
             "size": position.get("size", 0),
-            "unrealizedPnL": position.get("unrealisedPnl", 0)
+            "unrealizedPnL": position.get("unrealisedPnl", 0),
+            "liqPrice": position.get("liqPrice", 0),
+            "markPrice": position.get("markPrice", 0)
         }
 
     except Exception as e:
