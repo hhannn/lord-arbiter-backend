@@ -519,7 +519,8 @@ def get_bot_position(payload: BotPositionPayload):
             "liqPrice": position.get("liqPrice", 0),
             "markPrice": position.get("markPrice", 0),
             "takeProfit": position.get("takeProfit", 0),
-            "side": position.get("side", 0)
+            "side": position.get("side", 0),
+            "positionValue": position.get("positionValue", 0)
         }
 
     except Exception as e:
