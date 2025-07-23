@@ -555,7 +555,7 @@ def get_bot_position(payload: BotPositionPayload):
     try:
         session = HTTP(api_key=user["api_key"], api_secret=user["api_secret"])
         data = session.get_positions(category="linear", symbol=asset)
-        trx_logs = fetch_trx_logs(accountType="UNIFIED", category="linear", currency="USDT", limit=50, max_pages=5)
+        trx_logs = fetch_trx_logs(session=session, accountType="UNIFIED", category="linear", currency="USDT", limit=50, max_pages=5)
         
         position = data["result"]["list"][0]
         trx_list = trx_logs["result"]["list"]
