@@ -555,7 +555,7 @@ def get_bot_position(payload: BotPositionPayload):
                     # Filter + retain only allowed keys
                     sell_only = []
                     for trx in trx_list:
-                        if trx.get("side", "").lower() == "sell":
+                        if trx.get("side", "").lower() == "Sell":
                             filtered = {key: trx[key] for key in keys_to_keep if key in trx}
 
                             # Optional: basic validation
