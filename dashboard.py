@@ -547,7 +547,7 @@ def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages
         except Exception as e:
             print(f"An exception occurred during log fetching: {e}")
             break
-    sleep(1)
+
     return all_logs
 
 @router.post("/api/bot/position")
