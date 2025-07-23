@@ -80,6 +80,9 @@ class APIKeyPayload(BaseModel):
 class BotPositionPayload(BaseModel):
     asset: str
     user_id: int
+    
+class TransactionLogPayLoad(BaseModel):
+    user_id: int
 
 class RegisterPayload(BaseModel):
     username: str
@@ -196,11 +199,75 @@ def get_user_data(request: Request):
         balance_data = session.get_wallet_balance(accountType="UNIFIED")
         pnl_data = session.get_closed_pnl(category="linear", limit=50)
         user_data = session.get_api_key_information()
+        
+        all_trx_logs = []
+        cursor = None
+        pages_fetched = 0
+        weeks = 0
+        today = datetime.now()
+        seven_days_ago = today - timedelta(days=7)
+        keys_to_keep = ['symbol', 'side', 'change', 'transactionTime', 'cashBalance']
+
+        while weeks < 4:
+            max_retries = 0
+            while max_retries < 3:
+                try:
+                    params = {
+                        "accountType": "UNIFIED",
+                        "category": "linear",
+                        "currency": "USDT",
+                        "type": "Trade",
+                        "limit": 50,
+                        "startTime": int(seven_days_ago.timestamp() * 1000),
+                        "endTime": int(today.timestamp() * 1000)
+                    }
+                    if cursor:
+                        params["cursor"] = cursor
+
+                    trx_logs = session.get_transaction_log(**params)
+
+                    trx_list = trx_logs["result"]["list"]
+                    cursor = trx_logs["result"].get("nextPageCursor")
+
+                    # print(f"Page {pages_fetched + 1}: {len(trx_list)} items")
+                    # print(f"Next cursor: {cursor}")
+
+                    sell_only = [
+                        {key: trx[key] for key in keys_to_keep if key in trx}
+                        for trx in trx_list
+                        if trx.get("side", "").lower() == "sell"
+                    ]
+                    all_trx_logs.extend(sell_only)
+                    
+                    pages_fetched += 1
+
+                    if not cursor:
+                        # print(f"No more pages available. Fetched {pages_fetched} pages.")
+                        weeks += 1
+                        today -= timedelta(days=7, seconds=1)
+                        seven_days_ago -= timedelta(days=7, seconds=1)
+
+                    time.sleep(0.2)
+                    break
+                
+                except Exception as e:
+                    max_retries += 1
+                    # print(f"[Error] Failed to fetch page {pages_fetched + 1} (attempt {max_retries}): {e}")
+                    time.sleep(0.2)
+
+                    if max_retries >= 3:
+                        print("[Error] Max retries reached. Skipping to next week.")
+                        weeks += 1
+                        today -= timedelta(days=7, seconds=1)
+                        seven_days_ago -= timedelta(days=7, seconds=1)
+                        cursor = None
+                        break
 
         return {
             "balance": balance_data,
             "closedPnL": pnl_data,
             "userData": user_data,
+            "transactionLogs": all_trx_logs
         }
 
     except Exception as e:
@@ -515,69 +582,6 @@ def get_bot_position(payload: BotPositionPayload):
         session = HTTP(api_key=user["api_key"], api_secret=user["api_secret"])
         data = session.get_positions(category="linear", symbol=asset)
         position = data["result"]["list"][0]
-
-        all_trx_logs = []
-        cursor = None
-        pages_fetched = 0
-        weeks = 0
-        today = datetime.now()
-        seven_days_ago = today - timedelta(days=7)
-        keys_to_keep = ['symbol', 'side', 'change', 'transactionTime', 'cashBalance']
-
-        while weeks < 4:
-            max_retries = 0
-            while max_retries < 3:
-                try:
-                    params = {
-                        "accountType": "UNIFIED",
-                        "category": "linear",
-                        "currency": "USDT",
-                        "type": "Trade",
-                        "limit": 50,
-                        "startTime": int(seven_days_ago.timestamp() * 1000),
-                        "endTime": int(today.timestamp() * 1000)
-                    }
-                    if cursor:
-                        params["cursor"] = cursor
-
-                    trx_logs = session.get_transaction_log(**params)
-
-                    trx_list = trx_logs["result"]["list"]
-                    cursor = trx_logs["result"].get("nextPageCursor")
-
-                    # print(f"Page {pages_fetched + 1}: {len(trx_list)} items")
-                    # print(f"Next cursor: {cursor}")
-
-                    sell_only = [
-                        {key: trx[key] for key in keys_to_keep if key in trx}
-                        for trx in trx_list
-                        if trx.get("side", "").lower() == "sell"
-                    ]
-                    all_trx_logs.extend(sell_only)
-                    
-                    pages_fetched += 1
-
-                    if not cursor:
-                        # print(f"No more pages available. Fetched {pages_fetched} pages.")
-                        weeks += 1
-                        today -= timedelta(days=7, seconds=1)
-                        seven_days_ago -= timedelta(days=7, seconds=1)
-
-                    time.sleep(0.2)
-                    break
-                
-                except Exception as e:
-                    max_retries += 1
-                    # print(f"[Error] Failed to fetch page {pages_fetched + 1} (attempt {max_retries}): {e}")
-                    time.sleep(0.2)
-
-                    if max_retries >= 3:
-                        print("[Error] Max retries reached. Skipping to next week.")
-                        weeks += 1
-                        today -= timedelta(days=7, seconds=1)
-                        seven_days_ago -= timedelta(days=7, seconds=1)
-                        cursor = None
-                        break
         
         return {
             "size": position.get("size", 0),
@@ -587,7 +591,6 @@ def get_bot_position(payload: BotPositionPayload):
             "takeProfit": position.get("takeProfit", 0),
             "side": position.get("side", 0),
             "positionValue": position.get("positionValue", 0),
-            "transactionLog": all_trx_logs
         }
 
     except Exception as e:
