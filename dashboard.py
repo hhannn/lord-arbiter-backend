@@ -566,7 +566,7 @@ def get_bot_position(payload: BotPositionPayload):
                     pages_fetched += 1
 
                     if not cursor:
-                        # print(f"No more pages for this week. Fetched {pages_fetched} pages.")
+                        print(f"No more pages for this week. Fetched {pages_fetched} pages.")
                         # Move to the previous week
                         weeks += 1
                         today -= timedelta(days=7, seconds=1)
