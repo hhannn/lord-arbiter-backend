@@ -568,7 +568,7 @@ def get_bot_position(payload: BotPositionPayload):
         trx_logs = fetch_trx_logs(session=session, accountType="UNIFIED", category="linear", currency="USDT", limit=50, max_pages=5)
         
         position = data["result"]["list"][0]
-        trx_list = trx_logs["result"]["list"][0]
+        # trx_list = trx_logs["result"]["list"][0]
         
         desired_keys = ["symbol", "side", "change", "cashBalance", "cashBalance", "transactionTime"]
 
