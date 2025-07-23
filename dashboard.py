@@ -1,6 +1,8 @@
 # dashboard.py
 
+from datetime import datetime, timedelta
 from time import sleep
+import time
 import psycopg2
 import os
 import threading
@@ -512,45 +514,53 @@ def get_bot_position(payload: BotPositionPayload):
     try:
         session = HTTP(api_key=user["api_key"], api_secret=user["api_secret"])
         data = session.get_positions(category="linear", symbol=asset)
-        trx_logs = session.get_transaction_log(category="linear", symbol="USDT", limit=50)
         position = data["result"]["list"][0]
-        # trx_list = trx_logs["result"]["list"]
-        
-        # all_trx_logs = []
-        # cursor = None
-        # pages_fetched = 0
-        # max_pages = 5
 
-        # while pages_fetched < max_pages:
-        #     # Make API call with cursor
-        #     if cursor:
-        #         trx_logs = session.get_transaction_log(
-        #             category="linear", 
-        #             symbol="USDT", 
-        #             limit=50,
-        #             cursor=cursor
-        #         )
-        #     else:
-        #         trx_logs = session.get_transaction_log(
-        #             category="linear", 
-        #             symbol="USDT", 
-        #             limit=50
-        #         )
+        all_trx_logs = []
+        cursor = None
+        pages_fetched = 0
+        weeks = 0
+        today = datetime.now()
+        seven_days_ago = today - timedelta(days=7)
+        keys_to_keep = ['symbol', 'side', 'change', 'transactionTime', 'cashBalance']
+
+        while weeks < 4:
+            params = {
+                "accountType": "UNIFIED",
+                "category": "linear",
+                "currency": "USDT",
+                "type": "Trade",
+                "limit": 50,
+                "startTime": int(seven_days_ago.timestamp() * 1000),
+                "endTime": int(today.timestamp() * 1000)
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+            trx_logs = session.get_transaction_log(**params)
+
+            trx_list = trx_logs["result"]["list"]
+            cursor = trx_logs["result"].get("nextPageCursor")
+
+            print(f"Page {pages_fetched + 1}: {len(trx_list)} items")
+            print(f"Next cursor: {cursor}")
+
+            sell_only = [
+                {key: trx[key] for key in keys_to_keep if key in trx}
+                for trx in trx_list
+                if trx.get("side", "").lower() == "sell"
+            ]
+            all_trx_logs.extend(sell_only)
             
-        #     # Extract transaction list and cursor for next page
-        #     trx_list = trx_logs["result"]["list"]
-        #     cursor = trx_logs["result"].get("nextPageCursor")
-            
-        #     # Add current page transactions to our collection
-        #     all_trx_logs.extend(trx_list)
-        #     pages_fetched += 1
-            
-        #     # Break if no more pages available
-        #     if not cursor:
-        #         print(f"No more pages available. Fetched {pages_fetched} pages.")
-        #         break
-            
-        # print(all_trx_logs)
+            pages_fetched += 1
+
+            if not cursor:
+                print(f"No more pages available. Fetched {pages_fetched} pages.")
+                weeks += 1
+                today -= timedelta(days=7, seconds=1)
+                seven_days_ago -= timedelta(days=7, seconds=1)
+
+            time.sleep(0.2)
         
         return {
             "size": position.get("size", 0),
@@ -559,7 +569,8 @@ def get_bot_position(payload: BotPositionPayload):
             "markPrice": position.get("markPrice", 0),
             "takeProfit": position.get("takeProfit", 0),
             "side": position.get("side", 0),
-            "positionValue": position.get("positionValue", 0)
+            "positionValue": position.get("positionValue", 0),
+            "transactionLog": all_trx_logs
         }
 
     except Exception as e:
