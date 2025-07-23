@@ -511,8 +511,46 @@ def get_bot_position(payload: BotPositionPayload):
 
     try:
         session = HTTP(api_key=user["api_key"], api_secret=user["api_secret"])
-        data = session.get_positions(category="linear", symbol=asset)        
+        data = session.get_positions(category="linear", symbol=asset)
+        trx_logs = session.get_transaction_log(category="linear", symbol="USDT", limit=50)
         position = data["result"]["list"][0]
+        trx_list = trx_logs["result"]["list"]
+        
+        all_trx_logs = []
+        cursor = None
+        pages_fetched = 0
+        max_pages = 5
+
+        while pages_fetched < max_pages:
+            # Make API call with cursor
+            if cursor:
+                trx_logs = session.get_transaction_log(
+                    category="linear", 
+                    symbol="USDT", 
+                    limit=50,
+                    cursor=cursor
+                )
+            else:
+                trx_logs = session.get_transaction_log(
+                    category="linear", 
+                    symbol="USDT", 
+                    limit=50
+                )
+            
+            # Extract transaction list and cursor for next page
+            trx_list = trx_logs["result"]["list"]
+            cursor = trx_logs["result"].get("nextPageCursor")
+            
+            # Add current page transactions to our collection
+            all_trx_logs.extend(trx_list)
+            pages_fetched += 1
+            
+            # Break if no more pages available
+            if not cursor:
+                print(f"No more pages available. Fetched {pages_fetched} pages.")
+                break
+            
+        print(all_trx_logs)
         
         return {
             "size": position.get("size", 0),
