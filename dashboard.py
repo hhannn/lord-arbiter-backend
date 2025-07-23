@@ -507,18 +507,28 @@ def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages
         print(f"Fetching page {page_count} with cursor: {cursor}")
 
         try:
-            # Make the API call, including the cursor if it exists
             response = session.get_transaction_log(
                 accountType=accountType,
                 category=category,
                 currency=currency,
                 limit=limit,
-                cursor=cursor # Pass the cursor here
+                cursor=cursor
             )
 
-            if not response or response.get("retCode") != 0:
+            # --- IMPORTANT ROBUSTNESS CHECKS ---
+            if not isinstance(response, dict):
+                print(f"API response is not a dictionary: {response}")
+                break
+            if response.get("retCode") != 0:
                 print(f"Error fetching transaction logs: {response.get('retMsg', 'Unknown error')}")
                 break
+            if "result" not in response or not isinstance(response["result"], dict):
+                print(f"API response 'result' key missing or not a dictionary: {response}")
+                break
+            if "list" not in response["result"] or not isinstance(response["result"]["list"], list):
+                print(f"API response 'result.list' key missing or not a list: {response}")
+                break
+            # --- END ROBUSTNESS CHECKS ---
 
             result_list = response["result"]["list"]
             next_page_cursor = response["result"].get("nextPageCursor")
@@ -533,10 +543,10 @@ def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages
                 break
             else:
                 cursor = next_page_cursor
-                
+
         except Exception as e:
             print(f"An exception occurred during log fetching: {e}")
-            break # Exit loop on error
+            break
     sleep(2)
     return all_logs
 
@@ -558,12 +568,12 @@ def get_bot_position(payload: BotPositionPayload):
         trx_logs = fetch_trx_logs(session=session, accountType="UNIFIED", category="linear", currency="USDT", limit=50, max_pages=5)
         
         position = data["result"]["list"][0]
-        trx_list = trx_logs["result"]["list"]
+        trx_list = trx_logs["result"]["list"][0]
         
         desired_keys = ["symbol", "side", "change", "cashBalance", "cashBalance", "transactionTime"]
 
         filtered_and_mapped_trx = []
-        for entry in trx_list:
+        for entry in trx_logs:
             if entry.get("side") == "Sell":
                 new_entry = {key: entry.get(key) for key in desired_keys}
                 filtered_and_mapped_trx.append(new_entry)
