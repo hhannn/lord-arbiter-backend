@@ -497,102 +497,6 @@ def delete_bot(bot_id: int, request: Request):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete bot due to an internal error.")
 
-def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages=None):
-    all_logs = []
-    cursor = None
-    page_count = 0
-    seen_cursors = set()  # Track seen cursors to prevent infinite loops
-    
-    while True:
-        page_count += 1
-        print(f"Fetching page {page_count} with cursor: {cursor}")
-        
-        # Prevent infinite loops by tracking cursors
-        cursor_key = cursor or "initial"
-        if cursor_key in seen_cursors:
-            print(f"WARNING: Cursor '{cursor}' already seen, breaking to prevent infinite loop")
-            break
-        seen_cursors.add(cursor_key)
-        
-        try:
-            # Add parameters conditionally
-            params = {
-                "accountType": accountType,
-                "category": category,
-                "currency": currency,
-                "limit": limit
-            }
-            if cursor:
-                params["cursor"] = cursor
-                
-            response = session.get_transaction_log(**params)
-            
-            # Enhanced robustness checks with better logging
-            if not isinstance(response, dict):
-                print(f"ERROR: API response is not a dictionary: {type(response)} - {response}")
-                break
-                
-            ret_code = response.get("retCode")
-            if ret_code != 0:
-                ret_msg = response.get("retMsg", "Unknown error")
-                print(f"ERROR: API returned error code {ret_code}: {ret_msg}")
-                break
-                
-            result = response.get("result")
-            if not isinstance(result, dict):
-                print(f"ERROR: API response 'result' key missing or not a dictionary: {result}")
-                break
-                
-            result_list = result.get("list")
-            if not isinstance(result_list, list):
-                print(f"ERROR: API response 'result.list' key missing or not a list: {result_list}")
-                break
-            
-            next_page_cursor = result.get("nextPageCursor")
-            
-            # Log page info
-            print(f"Page {page_count}: Found {len(result_list)} records")
-            if next_page_cursor:
-                print(f"Next cursor: {next_page_cursor}")
-            else:
-                print("No next cursor - this should be the last page")
-            
-            # Add records if any
-            if result_list:
-                all_logs.extend(result_list)
-                print(f"Total records so far: {len(all_logs)}")
-            else:
-                print("No records found on this page")
-            
-            # Check exit conditions
-            if not next_page_cursor:
-                print("No next cursor found - reached end of data")
-                break
-                
-            if max_pages and page_count >= max_pages:
-                # print(f"Reached max pages limit ({max_pages})")
-                break
-            
-            # Update cursor for next iteration
-            prev_cursor = cursor
-            cursor = next_page_cursor
-            
-            # Additional safety check - if cursor didn't change
-            if prev_cursor == cursor:
-                print(f"WARNING: Cursor didn't change from '{cursor}', breaking to prevent infinite loop")
-                break
-            
-            # Add small delay to respect rate limits
-            sleep(0.1)  # 100ms delay between requests
-            
-        except Exception as e:
-            print(f"EXCEPTION occurred during log fetching on page {page_count}: {e}")
-            traceback.print_exc()
-            break
-    
-    print(f"Finished fetching transaction logs. Total pages: {page_count}, Total records: {len(all_logs)}")
-    return all_logs
-
 @router.post("/api/bot/position")
 def get_bot_position(payload: BotPositionPayload):
     asset = payload.asset
@@ -607,20 +511,9 @@ def get_bot_position(payload: BotPositionPayload):
 
     try:
         session = HTTP(api_key=user["api_key"], api_secret=user["api_secret"])
-        data = session.get_positions(category="linear", symbol=asset)
-        trx_logs = fetch_trx_logs(session=session, accountType="UNIFIED", category="linear", currency="USDT", limit=50, max_pages=10)
-        
+        data = session.get_positions(category="linear", symbol=asset)        
         position = data["result"]["list"][0]
-        # trx_list = trx_logs["result"]["list"][0]
         
-        desired_keys = ["symbol", "side", "change", "cashBalance", "cashBalance", "transactionTime"]
-
-        filtered_and_mapped_trx = []
-        for entry in trx_logs:
-            if entry.get("side") == "Sell":
-                new_entry = {key: entry.get(key) for key in desired_keys}
-                filtered_and_mapped_trx.append(new_entry)
-
         return {
             "size": position.get("size", 0),
             "unrealizedPnL": position.get("unrealisedPnl", 0),
@@ -628,8 +521,7 @@ def get_bot_position(payload: BotPositionPayload):
             "markPrice": position.get("markPrice", 0),
             "takeProfit": position.get("takeProfit", 0),
             "side": position.get("side", 0),
-            "positionValue": position.get("positionValue", 0),
-            "trxLogs": filtered_and_mapped_trx
+            "positionValue": position.get("positionValue", 0)
         }
 
     except Exception as e:
