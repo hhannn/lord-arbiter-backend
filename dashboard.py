@@ -192,7 +192,7 @@ def get_user_data(request: Request):
         )
 
         balance_data = session.get_wallet_balance(accountType="UNIFIED")
-        pnl_data = session.get_closed_pnl(category="linear")
+        pnl_data = session.get_closed_pnl(category="linear", limit=50)
         user_data = session.get_api_key_information()
 
         return {
