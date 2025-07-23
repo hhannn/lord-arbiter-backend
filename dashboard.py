@@ -1,5 +1,6 @@
 # dashboard.py
 
+from time import sleep
 import psycopg2
 import os
 import threading
@@ -496,6 +497,49 @@ def delete_bot(bot_id: int, request: Request):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete bot due to an internal error.")
 
+def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages=None):
+    all_logs = []
+    cursor = None
+    page_count = 0
+
+    while True:
+        page_count += 1
+        print(f"Fetching page {page_count} with cursor: {cursor}")
+
+        try:
+            # Make the API call, including the cursor if it exists
+            response = session.get_transaction_log(
+                accountType=accountType,
+                category=category,
+                currency=currency,
+                limit=limit,
+                cursor=cursor # Pass the cursor here
+            )
+
+            if not response or response.get("retCode") != 0:
+                print(f"Error fetching transaction logs: {response.get('retMsg', 'Unknown error')}")
+                break
+
+            result_list = response["result"]["list"]
+            next_page_cursor = response["result"].get("nextPageCursor")
+
+            if result_list:
+                all_logs.extend(result_list)
+            else:
+                print("No more records found on this page.")
+
+            if not next_page_cursor or (max_pages and page_count >= max_pages):
+                print("Reached end of transaction logs or max pages limit.")
+                break
+            else:
+                cursor = next_page_cursor
+                
+        except Exception as e:
+            print(f"An exception occurred during log fetching: {e}")
+            break # Exit loop on error
+    sleep(2)
+    return all_logs
+
 @router.post("/api/bot/position")
 def get_bot_position(payload: BotPositionPayload):
     asset = payload.asset
@@ -511,7 +555,18 @@ def get_bot_position(payload: BotPositionPayload):
     try:
         session = HTTP(api_key=user["api_key"], api_secret=user["api_secret"])
         data = session.get_positions(category="linear", symbol=asset)
+        trx_logs = fetch_trx_logs(accountType="UNIFIED", category="linear", currency="USDT", limit=50, max_pages=5)
+        
         position = data["result"]["list"][0]
+        trx_list = trx_logs["result"]["list"]
+        
+        desired_keys = ["symbol", "side", "change", "cashBalance", "cashBalance", "transactionTime"]
+
+        filtered_and_mapped_trx = []
+        for entry in trx_list:
+            if entry.get("side") == "Sell":
+                new_entry = {key: entry.get(key) for key in desired_keys}
+                filtered_and_mapped_trx.append(new_entry)
 
         return {
             "size": position.get("size", 0),
@@ -520,7 +575,8 @@ def get_bot_position(payload: BotPositionPayload):
             "markPrice": position.get("markPrice", 0),
             "takeProfit": position.get("takeProfit", 0),
             "side": position.get("side", 0),
-            "positionValue": position.get("positionValue", 0)
+            "positionValue": position.get("positionValue", 0),
+            "trxLogs": filtered_and_mapped_trx
         }
 
     except Exception as e:
