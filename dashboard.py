@@ -561,8 +561,6 @@ def get_bot_position(payload: BotPositionPayload):
                             # Optional: basic validation
                             if isinstance(filtered.get("transactionTime"), int) and isinstance(filtered.get("change", 0), (int, float)):
                                 sell_only.append(filtered)
-                            else:
-                                print(f"[Warning] Skipped malformed transaction: {filtered}")
 
                     all_trx_logs.extend(sell_only)
                     pages_fetched += 1
