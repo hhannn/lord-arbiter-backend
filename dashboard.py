@@ -524,43 +524,73 @@ def get_bot_position(payload: BotPositionPayload):
         seven_days_ago = today - timedelta(days=7)
         keys_to_keep = ['symbol', 'side', 'change', 'transactionTime', 'cashBalance']
 
+        max_retries = 3
+
         while weeks < 4:
-            params = {
-                "accountType": "UNIFIED",
-                "category": "linear",
-                "currency": "USDT",
-                "type": "Trade",
-                "limit": 50,
-                "startTime": int(seven_days_ago.timestamp() * 1000),
-                "endTime": int(today.timestamp() * 1000)
-            }
-            if cursor:
-                params["cursor"] = cursor
+            retries = 0
+            while retries < max_retries:
+                try:
+                    params = {
+                        "accountType": "UNIFIED",
+                        "category": "linear",
+                        "currency": "USDT",
+                        "type": "Trade",
+                        "limit": 50,
+                        "startTime": int(seven_days_ago.timestamp() * 1000),
+                        "endTime": int(today.timestamp() * 1000)
+                    }
+                    if cursor:
+                        params["cursor"] = cursor
 
-            trx_logs = session.get_transaction_log(**params)
+                    trx_logs = session.get_transaction_log(**params)
 
-            trx_list = trx_logs["result"]["list"]
-            cursor = trx_logs["result"].get("nextPageCursor")
+                    # Ensure proper structure
+                    result = trx_logs.get("result", {})
+                    trx_list = result.get("list", [])
+                    cursor = result.get("nextPageCursor")
 
-            print(f"Page {pages_fetched + 1}: {len(trx_list)} items")
-            print(f"Next cursor: {cursor}")
+                    # print(f"Page {pages_fetched + 1}: {len(trx_list)} items")
+                    # print(f"Next cursor: {cursor}")
 
-            sell_only = [
-                {key: trx[key] for key in keys_to_keep if key in trx}
-                for trx in trx_list
-                if trx.get("side", "").lower() == "sell"
-            ]
-            all_trx_logs.extend(sell_only)
-            
-            pages_fetched += 1
+                    # Filter + retain only allowed keys
+                    sell_only = []
+                    for trx in trx_list:
+                        if trx.get("side", "").lower() == "sell":
+                            filtered = {key: trx[key] for key in keys_to_keep if key in trx}
 
-            if not cursor:
-                print(f"No more pages available. Fetched {pages_fetched} pages.")
-                weeks += 1
-                today -= timedelta(days=7, seconds=1)
-                seven_days_ago -= timedelta(days=7, seconds=1)
+                            # Optional: basic validation
+                            if isinstance(filtered.get("transactionTime"), int) and isinstance(filtered.get("change", 0), (int, float)):
+                                sell_only.append(filtered)
+                            else:
+                                print(f"[Warning] Skipped malformed transaction: {filtered}")
 
-            time.sleep(0.2)
+                    all_trx_logs.extend(sell_only)
+                    pages_fetched += 1
+
+                    if not cursor:
+                        # print(f"No more pages for this week. Fetched {pages_fetched} pages.")
+                        # Move to the previous week
+                        weeks += 1
+                        today -= timedelta(days=7, seconds=1)
+                        seven_days_ago -= timedelta(days=7, seconds=1)
+                        cursor = None  # Reset pagination
+                        break  # Exit retry loop, move to next week
+
+                    time.sleep(0.2)
+                    break  # Break retry loop on success
+
+                except Exception as e:
+                    retries += 1
+                    print(f"[Error] Failed to fetch page {pages_fetched + 1} (attempt {retries}): {e}")
+                    time.sleep(2)
+
+                    if retries >= max_retries:
+                        print("[Error] Max retries reached. Skipping to next week.")
+                        weeks += 1
+                        today -= timedelta(days=7, seconds=1)
+                        seven_days_ago -= timedelta(days=7, seconds=1)
+                        cursor = None
+                        break
         
         return {
             "size": position.get("size", 0),
