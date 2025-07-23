@@ -504,7 +504,7 @@ def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages
 
     while True:
         page_count += 1
-        print(f"Fetching page {page_count} with cursor: {cursor}")
+        # print(f"Fetching page {page_count} with cursor: {cursor}")
 
         try:
             response = session.get_transaction_log(
@@ -535,11 +535,11 @@ def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages
 
             if result_list:
                 all_logs.extend(result_list)
-            else:
-                print("No more records found on this page.")
+            # else:
+            #     print("No more records found on this page.")
 
             if not next_page_cursor or (max_pages and page_count >= max_pages):
-                print("Reached end of transaction logs or max pages limit.")
+                # print("Reached end of transaction logs or max pages limit.")
                 break
             else:
                 cursor = next_page_cursor
@@ -547,7 +547,7 @@ def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages
         except Exception as e:
             print(f"An exception occurred during log fetching: {e}")
             break
-    sleep(2)
+    sleep(1)
     return all_logs
 
 @router.post("/api/bot/position")
@@ -565,7 +565,7 @@ def get_bot_position(payload: BotPositionPayload):
     try:
         session = HTTP(api_key=user["api_key"], api_secret=user["api_secret"])
         data = session.get_positions(category="linear", symbol=asset)
-        trx_logs = fetch_trx_logs(session=session, accountType="UNIFIED", category="linear", currency="USDT", limit=50, max_pages=5)
+        trx_logs = fetch_trx_logs(session=session, accountType="UNIFIED", category="linear", currency="USDT", limit=50, max_pages=10)
         
         position = data["result"]["list"][0]
         # trx_list = trx_logs["result"]["list"][0]
