@@ -501,53 +501,96 @@ def fetch_trx_logs(session, accountType, category, currency, limit=50, max_pages
     all_logs = []
     cursor = None
     page_count = 0
-
+    seen_cursors = set()  # Track seen cursors to prevent infinite loops
+    
     while True:
         page_count += 1
-        # print(f"Fetching page {page_count} with cursor: {cursor}")
-
+        print(f"Fetching page {page_count} with cursor: {cursor}")
+        
+        # Prevent infinite loops by tracking cursors
+        cursor_key = cursor or "initial"
+        if cursor_key in seen_cursors:
+            print(f"WARNING: Cursor '{cursor}' already seen, breaking to prevent infinite loop")
+            break
+        seen_cursors.add(cursor_key)
+        
         try:
-            response = session.get_transaction_log(
-                accountType=accountType,
-                category=category,
-                currency=currency,
-                limit=limit,
-                cursor=cursor
-            )
-
-            # --- IMPORTANT ROBUSTNESS CHECKS ---
+            # Add parameters conditionally
+            params = {
+                "accountType": accountType,
+                "category": category,
+                "currency": currency,
+                "limit": limit
+            }
+            if cursor:
+                params["cursor"] = cursor
+                
+            response = session.get_transaction_log(**params)
+            
+            # Enhanced robustness checks with better logging
             if not isinstance(response, dict):
-                print(f"API response is not a dictionary: {response}")
+                print(f"ERROR: API response is not a dictionary: {type(response)} - {response}")
                 break
-            if response.get("retCode") != 0:
-                print(f"Error fetching transaction logs: {response.get('retMsg', 'Unknown error')}")
+                
+            ret_code = response.get("retCode")
+            if ret_code != 0:
+                ret_msg = response.get("retMsg", "Unknown error")
+                print(f"ERROR: API returned error code {ret_code}: {ret_msg}")
                 break
-            if "result" not in response or not isinstance(response["result"], dict):
-                print(f"API response 'result' key missing or not a dictionary: {response}")
+                
+            result = response.get("result")
+            if not isinstance(result, dict):
+                print(f"ERROR: API response 'result' key missing or not a dictionary: {result}")
                 break
-            if "list" not in response["result"] or not isinstance(response["result"]["list"], list):
-                print(f"API response 'result.list' key missing or not a list: {response}")
+                
+            result_list = result.get("list")
+            if not isinstance(result_list, list):
+                print(f"ERROR: API response 'result.list' key missing or not a list: {result_list}")
                 break
-            # --- END ROBUSTNESS CHECKS ---
-
-            result_list = response["result"]["list"]
-            next_page_cursor = response["result"].get("nextPageCursor")
-
+            
+            next_page_cursor = result.get("nextPageCursor")
+            
+            # Log page info
+            print(f"Page {page_count}: Found {len(result_list)} records")
+            if next_page_cursor:
+                print(f"Next cursor: {next_page_cursor}")
+            else:
+                print("No next cursor - this should be the last page")
+            
+            # Add records if any
             if result_list:
                 all_logs.extend(result_list)
-            # else:
-            #     print("No more records found on this page.")
-
-            if not next_page_cursor or (max_pages and page_count >= max_pages):
-                # print("Reached end of transaction logs or max pages limit.")
-                break
+                print(f"Total records so far: {len(all_logs)}")
             else:
-                cursor = next_page_cursor
-
+                print("No records found on this page")
+            
+            # Check exit conditions
+            if not next_page_cursor:
+                print("No next cursor found - reached end of data")
+                break
+                
+            if max_pages and page_count >= max_pages:
+                # print(f"Reached max pages limit ({max_pages})")
+                break
+            
+            # Update cursor for next iteration
+            prev_cursor = cursor
+            cursor = next_page_cursor
+            
+            # Additional safety check - if cursor didn't change
+            if prev_cursor == cursor:
+                print(f"WARNING: Cursor didn't change from '{cursor}', breaking to prevent infinite loop")
+                break
+            
+            # Add small delay to respect rate limits
+            sleep(0.1)  # 100ms delay between requests
+            
         except Exception as e:
-            print(f"An exception occurred during log fetching: {e}")
+            print(f"EXCEPTION occurred during log fetching on page {page_count}: {e}")
+            traceback.print_exc()
             break
-
+    
+    print(f"Finished fetching transaction logs. Total pages: {page_count}, Total records: {len(all_logs)}")
     return all_logs
 
 @router.post("/api/bot/position")
