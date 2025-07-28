@@ -197,7 +197,7 @@ def get_user_data(request: Request):
         )
 
         balance_data = session.get_wallet_balance(accountType="UNIFIED")
-        pnl_data = session.get_closed_pnl(category="linear", limit=50)
+        pnl_data = session.get_closed_pnl(category="linear", limit=100)
         user_data = session.get_api_key_information()
         
         all_trx_logs = []
@@ -221,6 +221,7 @@ def get_user_data(request: Request):
                         "startTime": int(seven_days_ago.timestamp() * 1000),
                         "endTime": int(today.timestamp() * 1000)
                     }
+                    
                     if cursor:
                         params["cursor"] = cursor
 
