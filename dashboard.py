@@ -320,14 +320,15 @@ def create_bot(payload: CreateBotPayload, request: Request):
                     payload.rebuy,
                     "idle",
                     int(user_id),
-                    payload.start_type
+                    payload.start_type,
+                    payload.max_rebuy
                 ))
                 cur.execute("""
                     INSERT INTO bots (
                         asset, start_size, leverage, multiplier,
-                        take_profit, rebuy, status, user_id, created_at, start_type
+                        take_profit, rebuy, status, user_id, created_at, start_type, max_rebuy
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s)
                     RETURNING *;
                 """, (
                     payload.asset,
@@ -338,7 +339,8 @@ def create_bot(payload: CreateBotPayload, request: Request):
                     payload.rebuy,
                     "idle",
                     int(user_id),
-                    payload.start_type
+                    payload.start_type,
+                    payload.max_rebuy
                 ))
 
                 new_bot = cur.fetchone()
@@ -473,6 +475,9 @@ def edit_bot(bot_id: int, payload: EditBotPayload, request: Request):
                 if payload.start_type is not None:
                     update_fields.append("start_type = %s")
                     update_values.append(payload.start_type)
+                if payload.max_rebuy is not None:
+                    update_fields.append("max_rebuy = %s")
+                    update_values.append(payload.max_rebuy)
 
                 if not update_fields:
                     raise HTTPException(status_code=400, detail="No fields provided for update.")

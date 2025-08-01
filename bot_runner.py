@@ -40,7 +40,7 @@ class BotRunner:
         self.multiplier = float(bot_data["multiplier"])
         self.take_profit = float(bot_data["take_profit"])
         self.rebuy_percent = float(bot_data["rebuy"])
-        self.max_rebuys = 23
+        self.max_rebuys = int(bot_data["max_rebuy"])
 
         self.min_order_qty = None
         self.tick_size = None
