@@ -98,6 +98,7 @@ class CreateBotPayload(BaseModel):
     take_profit: float
     rebuy: float
     start_type: str
+    max_rebuy: int
 
 class EditBotPayload(BaseModel):
     asset: Optional[str] = None
@@ -107,6 +108,7 @@ class EditBotPayload(BaseModel):
     take_profit: Optional[float] = None
     rebuy: Optional[float] = None
     start_type: Optional[str] = None
+    max_rebuy: Optional[int] = None
 
 
 # --- API Endpoints ---
